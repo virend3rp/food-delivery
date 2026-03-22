@@ -3,12 +3,15 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/virend3rp/food-delivery/internal/events"
 )
 
@@ -46,6 +49,10 @@ func (m *mockOrderStore) GetByID(_ context.Context, _ string) (*Order, error) {
 		return nil, errors.New("not found")
 	}
 	return m.order, nil
+}
+
+func (m *mockOrderStore) UpdateStatus(_ context.Context, _, _ string) error {
+	return m.err
 }
 
 // --- helpers ---
@@ -184,5 +191,81 @@ func TestGetOrder_Found(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Errorf("status: got %d, want 200", w.Code)
+	}
+}
+
+// --- HandleStatusUpdate tests ---
+
+func marshalEvent(t *testing.T, v any) []byte {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func baseEvent(typ events.EventType) events.BaseEvent {
+	return events.BaseEvent{ID: uuid.New().String(), Type: typ, Timestamp: time.Now()}
+}
+
+func TestHandleStatusUpdate_AllStatusTransitions(t *testing.T) {
+	cases := []struct {
+		name       string
+		body       []byte
+		wantStatus string
+	}{
+		{
+			"accepted",
+			marshalEvent(t, events.OrderAcceptedEvent{BaseEvent: baseEvent(events.OrderAccepted), OrderID: "o1"}),
+			"accepted",
+		},
+		{
+			"rejected",
+			marshalEvent(t, events.OrderRejectedEvent{BaseEvent: baseEvent(events.OrderRejected), OrderID: "o1"}),
+			"rejected",
+		},
+		{
+			"driver_assigned",
+			marshalEvent(t, events.DriverAssignedEvent{BaseEvent: baseEvent(events.DriverAssigned), OrderID: "o1"}),
+			"driver_assigned",
+		},
+		{
+			"out_for_delivery",
+			marshalEvent(t, events.OrderPickedUpEvent{BaseEvent: baseEvent(events.OrderPickedUp), OrderID: "o1"}),
+			"out_for_delivery",
+		},
+		{
+			"delivered",
+			marshalEvent(t, events.OrderDeliveredEvent{BaseEvent: baseEvent(events.OrderDelivered), OrderID: "o1"}),
+			"delivered",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &mockOrderStore{}
+			h := NewHandler(&mockPublisher{}, store)
+
+			if err := h.HandleStatusUpdate(context.Background(), tc.body); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestHandleStatusUpdate_InvalidJSON(t *testing.T) {
+	h := NewHandler(&mockPublisher{}, &mockOrderStore{})
+	if err := h.HandleStatusUpdate(context.Background(), []byte("bad json")); err == nil {
+		t.Error("expected error for invalid JSON")
+	}
+}
+
+func TestHandleStatusUpdate_UnknownEvent_Ignored(t *testing.T) {
+	// order.created should be ignored — api-gateway publishes it, doesn't consume it for status
+	body := marshalEvent(t, events.BaseEvent{ID: "x", Type: "some.unknown", Timestamp: time.Now()})
+	h := NewHandler(&mockPublisher{}, &mockOrderStore{})
+	if err := h.HandleStatusUpdate(context.Background(), body); err != nil {
+		t.Errorf("unknown events should be silently ignored, got: %v", err)
 	}
 }

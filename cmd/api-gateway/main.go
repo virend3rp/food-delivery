@@ -5,14 +5,18 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/gin-gonic/gin"
 	"github.com/virend3rp/food-delivery/internal/db"
+	"github.com/virend3rp/food-delivery/internal/events"
 	"github.com/virend3rp/food-delivery/internal/rabbitmq"
 )
 
 func main() {
-	ctx := context.Background()
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
 
 	rabbitURL := getenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
 	dbURL := getenv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/orders_db")
@@ -41,6 +45,26 @@ func main() {
 	}
 
 	h := NewHandler(pub, store)
+
+	// Consumer: listen for downstream events and update order status
+	consumer, err := rabbitmq.NewConsumer(conn)
+	if err != nil {
+		log.Fatalf("[api-gateway] consumer: %v", err)
+	}
+	defer consumer.Close()
+
+	if err := consumer.DeclareQueue("api-gateway.status.queue",
+		string(events.OrderAccepted),
+		string(events.OrderRejected),
+		string(events.DriverAssigned),
+		string(events.OrderPickedUp),
+		string(events.OrderDelivered),
+	); err != nil {
+		log.Fatalf("[api-gateway] declare status queue: %v", err)
+	}
+	if err := consumer.Consume(ctx, "api-gateway.status.queue", h.HandleStatusUpdate); err != nil {
+		log.Fatalf("[api-gateway] consume: %v", err)
+	}
 
 	r := gin.Default()
 	r.GET("/health", func(c *gin.Context) {

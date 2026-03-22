@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -72,6 +74,62 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 		"status":   "pending",
 		"message":  "your order is being processed",
 	})
+}
+
+// statusMap maps incoming event types to the order status string stored in orders_db.
+var statusMap = map[events.EventType]string{
+	events.OrderAccepted:  "accepted",
+	events.OrderRejected:  "rejected",
+	events.DriverAssigned: "driver_assigned",
+	events.OrderPickedUp:  "out_for_delivery",
+	events.OrderDelivered: "delivered",
+}
+
+// HandleStatusUpdate consumes downstream events and updates orders_db so
+// GET /orders/:id always returns the current status.
+func (h *Handler) HandleStatusUpdate(ctx context.Context, body []byte) error {
+	var base events.BaseEvent
+	if err := json.Unmarshal(body, &base); err != nil {
+		return fmt.Errorf("unmarshal base event: %w", err)
+	}
+
+	status, ok := statusMap[base.Type]
+	if !ok {
+		return nil // ignore events we don't care about
+	}
+
+	// Extract the order ID from the specific event type
+	var orderID string
+	switch base.Type {
+	case events.OrderAccepted:
+		var e events.OrderAcceptedEvent
+		json.Unmarshal(body, &e)
+		orderID = e.OrderID
+	case events.OrderRejected:
+		var e events.OrderRejectedEvent
+		json.Unmarshal(body, &e)
+		orderID = e.OrderID
+	case events.DriverAssigned:
+		var e events.DriverAssignedEvent
+		json.Unmarshal(body, &e)
+		orderID = e.OrderID
+	case events.OrderPickedUp:
+		var e events.OrderPickedUpEvent
+		json.Unmarshal(body, &e)
+		orderID = e.OrderID
+	case events.OrderDelivered:
+		var e events.OrderDeliveredEvent
+		json.Unmarshal(body, &e)
+		orderID = e.OrderID
+	}
+
+	if err := h.store.UpdateStatus(ctx, orderID, status); err != nil {
+		log.Printf("[api-gateway] status update failed for order %s: %v", orderID, err)
+		return err
+	}
+
+	log.Printf("[api-gateway] order %s → %s", orderID, status)
+	return nil
 }
 
 func (h *Handler) GetOrder(c *gin.Context) {

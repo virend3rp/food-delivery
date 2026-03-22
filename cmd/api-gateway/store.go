@@ -21,6 +21,7 @@ type Order struct {
 type orderStore interface {
 	Save(ctx context.Context, e events.OrderCreatedEvent) error
 	GetByID(ctx context.Context, id string) (*Order, error)
+	UpdateStatus(ctx context.Context, orderID, status string) error
 }
 
 // PostgresOrderStore implements orderStore using PostgreSQL.
@@ -77,6 +78,13 @@ func (s *PostgresOrderStore) Save(ctx context.Context, e events.OrderCreatedEven
 	}
 
 	return tx.Commit(ctx)
+}
+
+func (s *PostgresOrderStore) UpdateStatus(ctx context.Context, orderID, status string) error {
+	_, err := s.db.Exec(ctx, `
+		UPDATE orders SET status = $1 WHERE id = $2
+	`, status, orderID)
+	return err
 }
 
 func (s *PostgresOrderStore) GetByID(ctx context.Context, id string) (*Order, error) {
