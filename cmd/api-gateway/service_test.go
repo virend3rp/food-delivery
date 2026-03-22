@@ -55,6 +55,18 @@ func (m *mockOrderStore) UpdateStatus(_ context.Context, _, _ string) error {
 	return m.err
 }
 
+func (m *mockOrderStore) ListByCustomer(_ context.Context, _ string) ([]Order, error) {
+	return []Order{}, m.err
+}
+
+func (m *mockOrderStore) RecordEvent(_ context.Context, _, _ string) error {
+	return nil
+}
+
+func (m *mockOrderStore) GetTimeline(_ context.Context, _ string) ([]OrderEvent, error) {
+	return []OrderEvent{}, m.err
+}
+
 // --- helpers ---
 
 func newRouter(h *Handler) *gin.Engine {

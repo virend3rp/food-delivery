@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,29 +19,23 @@ type publisher interface {
 type Service struct {
 	pub     publisher
 	store   restaurantStore
-	sleepFn func(time.Duration) // injectable for testing
+	sleepFn func(time.Duration)
 }
 
 func NewService(pub publisher, store restaurantStore) *Service {
-	return &Service{
-		pub:     pub,
-		store:   store,
-		sleepFn: time.Sleep,
-	}
+	return &Service{pub: pub, store: store, sleepFn: time.Sleep}
 }
 
-// HandleOrderCreated processes an order.created event:
-// simulates kitchen review, saves to DB, publishes order.accepted.
+// HandleOrderCreated processes an order.created event.
 func (s *Service) HandleOrderCreated(ctx context.Context, body []byte) error {
 	var order events.OrderCreatedEvent
 	if err := json.Unmarshal(body, &order); err != nil {
 		return fmt.Errorf("unmarshal order.created: %w", err)
 	}
 
-	log.Printf("[restaurant-service] order %s received — %d item(s) — $%.2f",
-		order.OrderID, len(order.Items), order.TotalPrice)
+	slog.Info("order received", "order_id", order.OrderID, "items", len(order.Items), "total", order.TotalPrice)
 
-	s.sleepFn(2 * time.Second) // simulate kitchen review
+	s.sleepFn(2 * time.Second)
 
 	record := RestaurantOrder{
 		OrderID:       order.OrderID,
@@ -50,7 +44,7 @@ func (s *Service) HandleOrderCreated(ctx context.Context, body []byte) error {
 		EstimatedTime: 30,
 	}
 	if err := s.store.Save(ctx, record); err != nil {
-		log.Printf("[restaurant-service] db save failed for order %s: %v", order.OrderID, err)
+		slog.Error("db save failed", "order_id", order.OrderID, "err", err)
 	}
 
 	accepted := events.OrderAcceptedEvent{
@@ -63,6 +57,6 @@ func (s *Service) HandleOrderCreated(ctx context.Context, body []byte) error {
 		return fmt.Errorf("publish order.accepted: %w", err)
 	}
 
-	log.Printf("[restaurant-service] order %s accepted — ETA 30 mins", order.OrderID)
+	slog.Info("order accepted", "order_id", order.OrderID, "eta_mins", 30)
 	return nil
 }

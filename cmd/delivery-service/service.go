@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,35 +25,25 @@ type Service struct {
 }
 
 func NewService(pub publisher, store deliveryStore) *Service {
-	return &Service{
-		pub:     pub,
-		store:   store,
-		sleepFn: time.Sleep,
-	}
+	return &Service{pub: pub, store: store, sleepFn: time.Sleep}
 }
 
-// HandleOrderAccepted processes an order.accepted event:
-// assigns a driver, publishes driver.assigned → order.picked_up → order.delivered.
+// HandleOrderAccepted processes an order.accepted event.
 func (s *Service) HandleOrderAccepted(ctx context.Context, body []byte) error {
 	var order events.OrderAcceptedEvent
 	if err := json.Unmarshal(body, &order); err != nil {
 		return fmt.Errorf("unmarshal order.accepted: %w", err)
 	}
 
-	log.Printf("[delivery-service] order %s accepted — finding driver", order.OrderID)
+	slog.Info("finding driver", "order_id", order.OrderID)
 
 	driverID := uuid.New().String()[:8]
 	driverName := driverPool[time.Now().UnixNano()%int64(len(driverPool))]
 
-	if err := s.store.Create(ctx, Delivery{
-		OrderID:    order.OrderID,
-		DriverID:   driverID,
-		DriverName: driverName,
-	}); err != nil {
-		log.Printf("[delivery-service] db create failed for order %s: %v", order.OrderID, err)
+	if err := s.store.Create(ctx, Delivery{OrderID: order.OrderID, DriverID: driverID, DriverName: driverName}); err != nil {
+		slog.Error("db create failed", "order_id", order.OrderID, "err", err)
 	}
 
-	// driver assigned
 	if err := s.pub.Publish(ctx, string(events.DriverAssigned), events.DriverAssignedEvent{
 		BaseEvent:  events.BaseEvent{ID: uuid.New().String(), Type: events.DriverAssigned, Timestamp: time.Now().UTC()},
 		OrderID:    order.OrderID,
@@ -62,13 +52,12 @@ func (s *Service) HandleOrderAccepted(ctx context.Context, body []byte) error {
 	}); err != nil {
 		return fmt.Errorf("publish driver.assigned: %w", err)
 	}
-	log.Printf("[delivery-service] driver %s (%s) assigned to order %s", driverName, driverID, order.OrderID)
+	slog.Info("driver assigned", "order_id", order.OrderID, "driver", driverName, "driver_id", driverID)
 
-	// simulate driving to restaurant
 	s.sleepFn(3 * time.Second)
 
 	if err := s.store.UpdatePickedUp(ctx, order.OrderID); err != nil {
-		log.Printf("[delivery-service] db update picked_up failed: %v", err)
+		slog.Error("db update picked_up failed", "order_id", order.OrderID, "err", err)
 	}
 	if err := s.pub.Publish(ctx, string(events.OrderPickedUp), events.OrderPickedUpEvent{
 		BaseEvent: events.BaseEvent{ID: uuid.New().String(), Type: events.OrderPickedUp, Timestamp: time.Now().UTC()},
@@ -77,13 +66,12 @@ func (s *Service) HandleOrderAccepted(ctx context.Context, body []byte) error {
 	}); err != nil {
 		return fmt.Errorf("publish order.picked_up: %w", err)
 	}
-	log.Printf("[delivery-service] order %s picked up by %s", order.OrderID, driverName)
+	slog.Info("order picked up", "order_id", order.OrderID, "driver", driverName)
 
-	// simulate driving to customer
 	s.sleepFn(3 * time.Second)
 
 	if err := s.store.UpdateDelivered(ctx, order.OrderID); err != nil {
-		log.Printf("[delivery-service] db update delivered failed: %v", err)
+		slog.Error("db update delivered failed", "order_id", order.OrderID, "err", err)
 	}
 	if err := s.pub.Publish(ctx, string(events.OrderDelivered), events.OrderDeliveredEvent{
 		BaseEvent: events.BaseEvent{ID: uuid.New().String(), Type: events.OrderDelivered, Timestamp: time.Now().UTC()},
@@ -92,7 +80,7 @@ func (s *Service) HandleOrderAccepted(ctx context.Context, body []byte) error {
 	}); err != nil {
 		return fmt.Errorf("publish order.delivered: %w", err)
 	}
-	log.Printf("[delivery-service] order %s delivered by %s", order.OrderID, driverName)
+	slog.Info("order delivered", "order_id", order.OrderID, "driver", driverName)
 
 	return nil
 }

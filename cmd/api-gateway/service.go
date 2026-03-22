@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -58,17 +58,18 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 	}
 
 	if err := h.store.Save(c.Request.Context(), event); err != nil {
-		log.Printf("[api-gateway] db save failed: %v", err)
-		// non-fatal: continue to publish
+		slog.Error("db save failed", "order_id", event.OrderID, "err", err)
+	} else {
+		h.store.RecordEvent(c.Request.Context(), event.OrderID, string(events.OrderCreated))
 	}
 
 	if err := h.pub.Publish(c.Request.Context(), string(events.OrderCreated), event); err != nil {
-		log.Printf("[api-gateway] publish failed: %v", err)
+		slog.Error("publish failed", "order_id", event.OrderID, "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to queue order"})
 		return
 	}
 
-	log.Printf("[api-gateway] order created: %s (total: $%.2f)", event.OrderID, total)
+	slog.Info("order created", "order_id", event.OrderID, "customer_id", req.CustomerID, "total", total)
 	c.JSON(http.StatusAccepted, gin.H{
 		"order_id": event.OrderID,
 		"status":   "pending",
@@ -76,7 +77,52 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 	})
 }
 
-// statusMap maps incoming event types to the order status string stored in orders_db.
+func (h *Handler) GetOrder(c *gin.Context) {
+	id := c.Param("id")
+	order, err := h.store.GetByID(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "order not found"})
+		return
+	}
+	c.JSON(http.StatusOK, order)
+}
+
+func (h *Handler) ListOrders(c *gin.Context) {
+	customerID := c.Query("customer_id")
+	if customerID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "customer_id query param is required"})
+		return
+	}
+
+	orders, err := h.store.ListByCustomer(c.Request.Context(), customerID)
+	if err != nil {
+		slog.Error("list orders failed", "customer_id", customerID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch orders"})
+		return
+	}
+
+	if orders == nil {
+		orders = []Order{} // return [] not null
+	}
+	c.JSON(http.StatusOK, orders)
+}
+
+func (h *Handler) GetTimeline(c *gin.Context) {
+	id := c.Param("id")
+	timeline, err := h.store.GetTimeline(c.Request.Context(), id)
+	if err != nil {
+		slog.Error("get timeline failed", "order_id", id, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch timeline"})
+		return
+	}
+
+	if timeline == nil {
+		timeline = []OrderEvent{} // return [] not null
+	}
+	c.JSON(http.StatusOK, timeline)
+}
+
+// statusMap maps incoming event types to the order status stored in orders_db.
 var statusMap = map[events.EventType]string{
 	events.OrderAccepted:  "accepted",
 	events.OrderRejected:  "rejected",
@@ -85,8 +131,8 @@ var statusMap = map[events.EventType]string{
 	events.OrderDelivered: "delivered",
 }
 
-// HandleStatusUpdate consumes downstream events and updates orders_db so
-// GET /orders/:id always returns the current status.
+// HandleStatusUpdate consumes downstream events, updates order status,
+// and records every event in the order timeline.
 func (h *Handler) HandleStatusUpdate(ctx context.Context, body []byte) error {
 	var base events.BaseEvent
 	if err := json.Unmarshal(body, &base); err != nil {
@@ -95,10 +141,9 @@ func (h *Handler) HandleStatusUpdate(ctx context.Context, body []byte) error {
 
 	status, ok := statusMap[base.Type]
 	if !ok {
-		return nil // ignore events we don't care about
+		return nil
 	}
 
-	// Extract the order ID from the specific event type
 	var orderID string
 	switch base.Type {
 	case events.OrderAccepted:
@@ -124,19 +169,12 @@ func (h *Handler) HandleStatusUpdate(ctx context.Context, body []byte) error {
 	}
 
 	if err := h.store.UpdateStatus(ctx, orderID, status); err != nil {
-		log.Printf("[api-gateway] status update failed for order %s: %v", orderID, err)
+		slog.Error("status update failed", "order_id", orderID, "status", status, "err", err)
 		return err
 	}
 
-	log.Printf("[api-gateway] order %s → %s", orderID, status)
-	return nil
-}
+	h.store.RecordEvent(ctx, orderID, string(base.Type))
 
-func (h *Handler) GetOrder(c *gin.Context) {
-	order, err := h.store.GetByID(c.Request.Context(), c.Param("id"))
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "order not found"})
-		return
-	}
-	c.JSON(http.StatusOK, order)
+	slog.Info("order status updated", "order_id", orderID, "status", status)
+	return nil
 }
