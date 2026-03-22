@@ -6,10 +6,10 @@ services:
     container_name: rabbitmq
     ports:
       - "5672:5672"
-      - "15672:15672"   # management UI → http://localhost:15672 (guest/guest)
+      - "15672:15672"   # management UI → http://localhost:15672
     environment:
-      RABBITMQ_DEFAULT_USER: guest
-      RABBITMQ_DEFAULT_PASS: guest
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS}
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "ping"]
       interval: 10s
@@ -22,14 +22,14 @@ services:
     ports:
       - "5433:5432"   # 5433 on host → avoids conflict with local postgres
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: postgres
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -42,8 +42,8 @@ services:
     ports:
       - "8080:8080"
     environment:
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
-      DATABASE_URL: postgres://postgres:postgres@postgres:5432/orders_db
+      RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASS}@${RABBITMQ_HOST}:${RABBITMQ_PORT}/
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/orders_db
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -56,8 +56,8 @@ services:
       dockerfile: deployments/restaurant-service.Dockerfile
     container_name: restaurant-service
     environment:
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
-      DATABASE_URL: postgres://postgres:postgres@postgres:5432/restaurant_db
+      RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASS}@${RABBITMQ_HOST}:${RABBITMQ_PORT}/
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/restaurant_db
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -70,8 +70,8 @@ services:
       dockerfile: deployments/delivery-service.Dockerfile
     container_name: delivery-service
     environment:
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
-      DATABASE_URL: postgres://postgres:postgres@postgres:5432/delivery_db
+      RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASS}@${RABBITMQ_HOST}:${RABBITMQ_PORT}/
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/delivery_db
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -84,8 +84,8 @@ services:
       dockerfile: deployments/notification-service.Dockerfile
     container_name: notification-service
     environment:
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
-      DATABASE_URL: postgres://postgres:postgres@postgres:5432/notification_db
+      RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASS}@${RABBITMQ_HOST}:${RABBITMQ_PORT}/
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/notification_db
     depends_on:
       rabbitmq:
         condition: service_healthy

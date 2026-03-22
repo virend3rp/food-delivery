@@ -2,9 +2,8 @@
 food-delivery
 /bin/
 
-# Environment files
+# Environment files — never commit real credentials
 .env
-.env.*
 
 # IDE
 .idea/

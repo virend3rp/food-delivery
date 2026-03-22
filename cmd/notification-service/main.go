@@ -19,8 +19,16 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	rabbitURL := config.WithDefault("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
-	dbURL := config.WithDefault("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/notification_db")
+	rabbitURL, err := config.Required("RABBITMQ_URL")
+	if err != nil {
+		slog.Error("missing config", "err", err)
+		os.Exit(1)
+	}
+	dbURL, err := config.Required("DATABASE_URL")
+	if err != nil {
+		slog.Error("missing config", "err", err)
+		os.Exit(1)
+	}
 
 	conn, err := rabbitmq.NewConnection(rabbitURL)
 	if err != nil {
