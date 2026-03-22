@@ -1,0 +1,15 @@
+# Binaries
+food-delivery
+/bin/
+
+# Environment files
+.env
+.env.*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
